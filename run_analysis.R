@@ -1,59 +1,131 @@
 # Getting and Cleaning Data Course Project
-# Samsung Galaxy S Smartphone Dataset
+# run_analysis.R
+#
+# This script:
+# 1. Merges the training and test sets.
+# 2. Extracts measurements on the mean and standard deviation.
+# 3. Uses descriptive activity names.
+# 4. Applies descriptive variable names.
+# 5. Creates an independent tidy data set with averages by subject and activity.
+#
+# Expected directory structure:
+#   .
+#   ├── run_analysis.R
+#   └── UCI HAR Dataset/
+#
+# The script downloads and extracts the dataset automatically if it is not present.
 
-# 1. Read the activity labels and features
-activity_labels <- read.table("UCI HAR Dataset/activity_labels.txt",
-                              header = FALSE)
+data_url <- "https://d396qusza40orc.cloudfront.net/getdata/projectfiles/UCI%20HAR%20Dataset.zip"
+zip_file <- "UCI_HAR_Dataset.zip"
+data_dir <- "UCI HAR Dataset"
 
-features <- read.table("UCI HAR Dataset/features.txt",
-                       header = FALSE)
+if (!dir.exists(data_dir)) {
+  if (!file.exists(zip_file)) {
+    download.file(data_url, zip_file, mode = "wb")
+  }
+  unzip(zip_file)
+}
 
-# 2. Read the training data
-x_train <- read.table("UCI HAR Dataset/train/X_train.txt")
-y_train <- read.table("UCI HAR Dataset/train/y_train.txt")
-subject_train <- read.table("UCI HAR Dataset/train/subject_train.txt")
+# Check that the expected files exist.
+required_files <- c(
+  file.path(data_dir, "activity_labels.txt"),
+  file.path(data_dir, "features.txt"),
+  file.path(data_dir, "train", "X_train.txt"),
+  file.path(data_dir, "train", "y_train.txt"),
+  file.path(data_dir, "train", "subject_train.txt"),
+  file.path(data_dir, "test", "X_test.txt"),
+  file.path(data_dir, "test", "y_test.txt"),
+  file.path(data_dir, "test", "subject_test.txt")
+)
 
-# 3. Read the test data
-x_test <- read.table("UCI HAR Dataset/test/X_test.txt")
-y_test <- read.table("UCI HAR Dataset/test/y_test.txt")
-subject_test <- read.table("UCI HAR Dataset/test/subject_test.txt")
+missing_files <- required_files[!file.exists(required_files)]
+if (length(missing_files) > 0) {
+  stop(
+    paste(
+      "The following required files are missing:",
+      paste(missing_files, collapse = "\n")
+    )
+  )
+}
 
-# 4. Assign descriptive names to the variables
-colnames(x_train) <- features[, 2]
-colnames(x_test) <- features[, 2]
+# Read activity labels and feature names.
+activity_labels <- read.table(
+  file.path(data_dir, "activity_labels.txt"),
+  col.names = c("activity_id", "activity")
+)
 
-colnames(y_train) <- "Activity"
-colnames(y_test) <- "Activity"
+features <- read.table(
+  file.path(data_dir, "features.txt"),
+  col.names = c("feature_id", "feature")
+)
 
-colnames(subject_train) <- "Subject"
-colnames(subject_test) <- "Subject"
+# Select only measurements containing mean() or std().
+# This follows the project requirement to extract mean and standard deviation
+# measurements, while avoiding unrelated variables such as angle(...mean...).
+selected <- grepl("-(mean|std)\\(", features$feature)
+selected_features <- features$feature[selected]
 
-# 5. Merge the training and test datasets
-x_data <- rbind(x_train, x_test)
-y_data <- rbind(y_train, y_test)
-subject_data <- rbind(subject_train, subject_test)
+# Read training data.
+X_train <- read.table(file.path(data_dir, "train", "X_train.txt"))
+y_train <- read.table(file.path(data_dir, "train", "y_train.txt"),
+                      col.names = "activity_id")
+subject_train <- read.table(file.path(data_dir, "train", "subject_train.txt"),
+                            col.names = "subject")
 
-# 6. Create one complete dataset
-data <- cbind(subject_data, y_data, x_data)
+# Read test data.
+X_test <- read.table(file.path(data_dir, "test", "X_test.txt"))
+y_test <- read.table(file.path(data_dir, "test", "y_test.txt"),
+                     col.names = "activity_id")
+subject_test <- read.table(file.path(data_dir, "test", "subject_test.txt"),
+                           col.names = "subject")
 
-# 7. Extract only measurements on the mean and standard deviation
-mean_std_columns <- grep("mean\\(\\)|std\\(\\)", colnames(data))
+# Apply feature names, then select the requested measurements.
+names(X_train) <- features$feature
+names(X_test) <- features$feature
 
-data <- data[, c(1, 2, mean_std_columns)]
+X_train <- X_train[, selected, drop = FALSE]
+X_test <- X_test[, selected, drop = FALSE]
 
-# 8. Use descriptive activity names
-data$Activity <- activity_labels[data$Activity, 2]
+# Add subject and activity identifiers.
+train <- cbind(subject_train, y_train, X_train)
+test <- cbind(subject_test, y_test, X_test)
 
-# 9. Create descriptive activity names
-data$Activity <- factor(data$Activity)
+# Merge training and test sets.
+all_data <- rbind(train, test)
 
-# 10. Create a tidy dataset with the average of each variable
-# for each activity and each subject
-tidy_data <- aggregate(. ~ Subject + Activity,
-                        data = data,
-                        FUN = mean)
+# Replace activity IDs with descriptive activity names.
+all_data$activity <- activity_labels$activity[
+  match(all_data$activity_id, activity_labels$activity_id)
+]
 
-# 11. Write the tidy dataset to a text file
-write.table(tidy_data,
-            "tidy_data.txt",
-            row.name = FALSE)
+# Put identifier columns first and use descriptive names.
+all_data <- all_data[, c("subject", "activity", selected_features)]
+
+# Create the second tidy data set: average of each measurement
+# for every subject and activity.
+tidy_data <- aggregate(
+  all_data[, selected_features],
+  by = list(subject = all_data$subject, activity = all_data$activity),
+  FUN = mean
+)
+
+# Sort for readability.
+tidy_data <- tidy_data[order(tidy_data$subject, tidy_data$activity), ]
+
+# Write the final tidy data set.
+write.table(
+  tidy_data,
+  file = "tidy_data.txt",
+  row.names = FALSE,
+  quote = FALSE,
+  sep = "\t"
+)
+
+message("Analysis complete.")
+message("Created: tidy_data.txt")
+message(
+  paste(
+    "Final tidy data dimensions:",
+    nrow(tidy_data), "rows x", ncol(tidy_data), "columns."
+  )
+)
